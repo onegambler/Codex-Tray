@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Codex Usage Monitor
+Comment=Tracks Codex CLI usage and displays remaining limit
+Exec=codex-tray
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Utility;System;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

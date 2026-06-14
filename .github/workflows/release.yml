@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Python syntax
+        run: |
+          python3 -m py_compile codex_tray.py
+          python3 -m py_compile usage_tracker.py
+          python3 -m py_compile icon_renderer.py
+          python3 -m py_compile config.py
+
+  build-deb:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .deb package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          scripts/build-deb.sh "$VERSION"
+
+      - name: Upload .deb as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-tray-deb
+          path: codex-tray_*.deb
+
+  release:
+    needs: build-deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-tray-deb
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Codex Tray ${{ github.ref_name }}
+          body: |
+            ## Codex Tray ${{ github.ref_name }}
+
+            ### Install
+
+            **Debian / Ubuntu** — download the `.deb` and double-click to install via Software Center, or run:
+
+            ```bash
+            sudo dpkg -i codex-tray_*.deb
+            sudo apt install -f
+            ```
+
+            **Other distros** — download the source and run the install script:
+
+            ```bash
+            git clone https://github.com/${{ github.repository }}.git
+            cd codex-tray
+            ./install.sh
+            ```
+
+            ### Prerequisites
+
+            [Codex CLI](https://github.com/openai/codex) must be installed and logged in:
+            ```bash
+            npm install -g @openai/codex
+            codex
+            ```
+          files: codex-tray_*.deb
