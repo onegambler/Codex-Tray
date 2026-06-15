@@ -37,6 +37,7 @@ class CodexTrayApp:
     def __init__(self):
         self.popup = None
         self.stats = None
+        self._refreshing = False
         self.status_icon = Gtk.StatusIcon()
         self.status_icon.set_name("codex-tray")
         self.status_icon.set_tooltip_text("Codex Usage Monitor")
@@ -53,12 +54,15 @@ class CodexTrayApp:
         GLib.timeout_add_seconds(REFRESH_INTERVAL_SECONDS, self._on_timer)
 
     def _first_refresh(self):
-        self.stats = self._fetch_stats()
-        self._apply_stats(self.stats)
-        self.status_icon.set_visible(True)
-        if not self.stats.error:
-            pct = max(0, 100 - int(self.stats.used_percent))
-            LOG.info(f"Loaded: {pct}% remaining (5h), {self.stats.secondary_used}% (7d), {self.stats.thread_count} sessions")
+        try:
+            self.stats = self._fetch_stats()
+            self._apply_stats(self.stats)
+            self.status_icon.set_visible(True)
+            if not self.stats.error:
+                pct = max(0, 100 - int(self.stats.used_percent))
+                LOG.info(f"Loaded: {pct}% remaining (5h), {self.stats.secondary_used}% (7d), {self.stats.thread_count} sessions")
+        except Exception as e:
+            LOG.warning(f"First refresh error: {e}")
         return False
 
     def _fetch_stats(self):
@@ -98,14 +102,32 @@ class CodexTrayApp:
             self._show_popup(stats)
 
     def _refresh_bg(self):
+        if self._refreshing:
+            return
+        self._refreshing = True
         threading.Thread(target=self._refresh_thread, daemon=True).start()
 
     def _refresh_thread(self):
-        stats = self._fetch_stats()
-        GLib.idle_add(lambda: (self._apply_stats(stats), False)[1])
+        try:
+            stats = self._fetch_stats()
+            GLib.idle_add(self._idle_apply_stats, stats)
+        except Exception as e:
+            LOG.warning(f"Refresh thread error: {e}")
+            GLib.idle_add(lambda: setattr(self, "_refreshing", False))
+
+    def _idle_apply_stats(self, stats):
+        try:
+            self._apply_stats(stats)
+        except Exception as e:
+            LOG.warning(f"UI update error: {e}")
+        self._refreshing = False
+        return False
 
     def _on_timer(self):
-        self._refresh_bg()
+        try:
+            self._refresh_bg()
+        except Exception as e:
+            LOG.warning(f"Timer error: {e}")
         return True
 
     def on_left_click(self, *_args):
