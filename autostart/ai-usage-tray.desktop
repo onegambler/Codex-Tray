@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Codex Usage Monitor
-Comment=Tracks Codex CLI usage and displays remaining limit
-Exec=codex-tray
+Name=AI Usage Tray
+Comment=Tracks AI coding assistant usage and displays remaining limits
+Exec=ai-usage-tray
 Icon=utilities-system-monitor
 Terminal=false
 Categories=Utility;System;

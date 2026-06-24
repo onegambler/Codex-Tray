@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-tray"
-version = "0.1.0"
-description = "Linux system-tray monitor for ChatGPT Codex CLI usage"
+name = "ai-usage-tray"
+version = "0.2.0"
+description = "Linux system-tray monitor for AI coding assistant usage"
 requires-python = ">=3.10"
 
 [project.scripts]
-codex-tray = "codex_tray:main"
+ai-usage-tray = "ai_usage_tray.tray_app:main"
 
 [tool.setuptools]
-py-modules = ["codex_tray", "usage_tracker", "icon_renderer", "config"]
+packages = ["ai_usage_tray", "ai_usage_tray.providers"]
