@@ -93,6 +93,26 @@ def _format_reset(ts: int) -> str:
     return f"  resets in {h}h {m}m"
 
 
+def _format_window_tooltip_line(window) -> str:
+    remaining = max(0, int(round(window.remaining_percent)))
+    reset = _format_reset(window.reset_at).strip()
+    suffix = f", {reset}" if reset else ""
+    return f"{window.label}: {remaining}% left{suffix}"
+
+
+def _build_usage_tooltip(provider_name: str, usage: ProviderUsage) -> str:
+    parts = [provider_name]
+    if usage.error:
+        parts.append(f"Error: {usage.error}")
+    if usage.note:
+        parts.append(f"({usage.note})")
+    for window in usage.windows:
+        parts.append(_format_window_tooltip_line(window))
+    if usage.last_refreshed:
+        parts.append(f"Updated: {usage.last_refreshed}")
+    return "\n".join(parts)
+
+
 class ProviderIcon:
     def __init__(self, controller, index: int, provider: BaseProvider, initial_usage: ProviderUsage | None = None):
         self.controller = controller
@@ -103,6 +123,9 @@ class ProviderIcon:
         self.status_icon = None
         self.popup = None
         self._refreshing = False
+        self._popup_grabbed = False
+        self._popup_shown_at = 0
+        self._popup_click_pos = None
         self._icon_name = f"{provider.id}-{index}"
         self._icon_path = CACHE_DIR / "icons" / f"{self._icon_name}.png"
 
@@ -164,6 +187,7 @@ class ProviderIcon:
         return menu
 
     def _on_show_usage(self, _item):
+        self._capture_click_position()
         self._show_popup()
         self.refresh()
 
@@ -171,7 +195,11 @@ class ProviderIcon:
         self.controller.remove_provider(self.index)
 
     def _on_left_click(self, *_args):
-        self._show_popup()
+        self._capture_click_position()
+        if self.popup and self.popup.get_visible():
+            self._hide_popup()
+        else:
+            self._show_popup()
         self.refresh()
 
     def _on_right_click(self, _icon, button, time):
@@ -205,9 +233,6 @@ class ProviderIcon:
                 self._update_statusicon_image()
                 self.status_icon.set_tooltip_text(self._build_tooltip())
 
-            if self.popup and self.popup.get_visible():
-                self._show_popup()
-
             self.controller.on_provider_updated(self.index, usage)
         except Exception as e:
             LOG.exception(f"Failed to apply usage for {self.provider.id}: {e}")
@@ -238,16 +263,7 @@ class ProviderIcon:
         self.indicator.set_label(f"{pct}%", "100%")
 
     def _build_tooltip(self) -> str:
-        parts = [self.provider.name]
-        if self.usage.error:
-            parts.append(f"Error: {self.usage.error}")
-        if self.usage.note:
-            parts.append(f"({self.usage.note})")
-        for w in self.usage.windows:
-            parts.append(f"{w.label}: {int(w.remaining_percent)}%")
-        if self.usage.last_refreshed:
-            parts.append(f"Updated: {self.usage.last_refreshed}")
-        return "  ".join(parts)
+        return _build_usage_tooltip(self.provider.name, self.usage)
 
     def _show_popup(self):
         try:
@@ -266,12 +282,13 @@ class ProviderIcon:
         self.popup.set_position(Gtk.WindowPosition.NONE)
         self.popup.set_type_hint(Gdk.WindowTypeHint.DROPDOWN_MENU)
 
-        self.popup.connect("destroy", lambda *a: setattr(self, "popup", None))
+        self.popup.connect("destroy", self._on_popup_destroyed)
         self.popup.connect("focus-out-event", lambda w, e: self._hide_popup())
         self.popup.connect(
             "key-press-event",
             lambda w, e: self._hide_popup() if e.keyval == Gdk.keyval_from_name("Escape") else None,
         )
+        self.popup.connect("button-press-event", self._on_popup_button_press)
         self.popup.set_keep_above(True)
         self.popup.set_accept_focus(True)
         self.popup.set_focus_on_map(True)
@@ -321,24 +338,27 @@ class ProviderIcon:
         for w in usage.windows:
             vbox.pack_start(self._bar_row(w), False, False, 4)
 
-        if usage.windows:
-            vbox.pack_start(Gtk.Separator(), False, False, 4)
+        grid_items = []
+        if usage.total_tokens:
+            grid_items.append(("Total tokens", f"{usage.total_tokens:,}"))
+        if usage.weekly_tokens:
+            grid_items.append(("Weekly tokens", f"{usage.weekly_tokens:,}"))
+        if usage.session_count:
+            grid_items.append(("Sessions", str(usage.session_count)))
 
-        grid = Gtk.Grid()
-        grid.set_column_spacing(12)
-        grid.set_row_spacing(2)
-        items = [
-            ("Total tokens", f"{usage.total_tokens:,}"),
-            ("Weekly tokens", f"{usage.weekly_tokens:,}"),
-            ("Sessions", str(usage.session_count)),
-        ]
-        for row, (lbl_text, val_text) in enumerate(items):
-            lbl = Gtk.Label(label=lbl_text, xalign=0)
-            lbl.get_style_context().add_class("dim-label")
-            val = Gtk.Label(label=val_text, xalign=1)
-            grid.attach(lbl, 0, row, 1, 1)
-            grid.attach(val, 1, row, 1, 1)
-        vbox.pack_start(grid, False, False, 0)
+        if grid_items:
+            if usage.windows:
+                vbox.pack_start(Gtk.Separator(), False, False, 4)
+            grid = Gtk.Grid()
+            grid.set_column_spacing(12)
+            grid.set_row_spacing(2)
+            for row, (lbl_text, val_text) in enumerate(grid_items):
+                lbl = Gtk.Label(label=lbl_text, xalign=0)
+                lbl.get_style_context().add_class("dim-label")
+                val = Gtk.Label(label=val_text, xalign=1)
+                grid.attach(lbl, 0, row, 1, 1)
+                grid.attach(val, 1, row, 1, 1)
+            vbox.pack_start(grid, False, False, 0)
 
         if any(w.limit_reached for w in usage.windows):
             vbox.pack_start(Gtk.Separator(), False, False, 4)
@@ -388,6 +408,8 @@ class ProviderIcon:
         self.popup.show_all()
         self.popup.present_with_time(Gdk.CURRENT_TIME)
         self.popup.grab_focus()
+        self._popup_shown_at = GLib.get_monotonic_time()
+        GLib.timeout_add(80, self._grab_pointer)
 
     def _bar_row(self, w) -> Gtk.Box:
         row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -420,6 +442,16 @@ class ProviderIcon:
         row.pack_start(bar_box, False, False, 0)
         return row
 
+    def _capture_click_position(self):
+        try:
+            display = Gdk.Display.get_default()
+            seat = display.get_default_seat()
+            pointer = seat.get_pointer()
+            screen = display.get_default_screen()
+            self._popup_click_pos = pointer.get_position(screen)
+        except Exception:
+            self._popup_click_pos = None
+
     def _position_popup(self):
         popup = self.popup
         if not popup:
@@ -429,12 +461,14 @@ class ProviderIcon:
 
         if self.status_icon:
             result = self.status_icon.get_geometry()
-            if result and result[0]:
-                rect = result[2]
+            rect = result[2] if result and len(result) > 2 else None
+            # Some trays only report valid geometry for the first icon;
+            # fall back to the click coordinates if the rect looks bogus.
+            if rect and rect.width > 1 and rect.height > 1 and (rect.x or rect.y):
                 monitor = display.get_monitor_at_point(rect.x, rect.y)
                 monitor_geo = monitor.get_geometry()
-                min_h, pref_h = popup.get_preferred_height()
-                popup_height = max(pref_h, 300)
+                min_h, nat_h = popup.get_preferred_height()
+                popup_height = max(nat_h, min_h, 1)
                 if rect.y + rect.height > monitor_geo.y + monitor_geo.height // 2:
                     px = rect.x
                     py = rect.y - popup_height - 4
@@ -444,14 +478,21 @@ class ProviderIcon:
                 popup.move(max(0, int(px)), max(0, int(py)))
                 return
 
-        # AppIndicator / fallback: position near pointer.
-        try:
-            seat = display.get_default_seat()
-            pointer = seat.get_pointer()
-            screen = display.get_default_screen()
-            px, py = pointer.get_position(screen)
+        # AppIndicator / fallback: position near pointer/click location.
+        px = py = None
+        if self._popup_click_pos:
+            px, py = self._popup_click_pos
+        if px is None or py is None:
+            try:
+                seat = display.get_default_seat()
+                pointer = seat.get_pointer()
+                screen = display.get_default_screen()
+                px, py = pointer.get_position(screen)
+            except Exception:
+                px = py = None
+        if px is not None and py is not None:
             popup.move(max(0, int(px) - 180), max(0, int(py) - 50))
-        except Exception:
+        else:
             monitor = display.get_primary_monitor() or display.get_monitor(0)
             geo = monitor.get_geometry()
             popup.move(geo.x + geo.width - 380, geo.y + geo.height - 320)
@@ -465,9 +506,51 @@ class ProviderIcon:
         self._hide_popup()
 
     def _hide_popup(self):
+        if self._popup_grabbed:
+            self._popup_grabbed = False
+            try:
+                Gdk.pointer_ungrab(Gdk.CURRENT_TIME)
+            except Exception:
+                pass
         if self.popup:
             self.popup.destroy()
             self.popup = None
+
+    def _on_popup_destroyed(self, *_args):
+        if self._popup_grabbed:
+            self._popup_grabbed = False
+            try:
+                Gdk.pointer_ungrab(Gdk.CURRENT_TIME)
+            except Exception:
+                pass
+        self.popup = None
+
+    def _grab_pointer(self):
+        if not self.popup or not self.popup.get_realized():
+            return False
+        window = self.popup.get_window()
+        if not window:
+            return False
+        mask = (
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+        )
+        status = Gdk.pointer_grab(window, True, mask, None, None, Gdk.CURRENT_TIME)
+        if status == Gdk.GrabStatus.SUCCESS:
+            self._popup_grabbed = True
+        return False
+
+    def _on_popup_button_press(self, widget, event):
+        if not self.popup:
+            return False
+        elapsed_ms = (GLib.get_monotonic_time() - self._popup_shown_at) / 1000
+        if elapsed_ms < 250:
+            return False
+        alloc = widget.get_allocation()
+        if event.x < 0 or event.x > alloc.width or event.y < 0 or event.y > alloc.height:
+            self._hide_popup()
+            return True
+        return False
 
     def destroy(self):
         self._hide_popup()

@@ -21,6 +21,29 @@ def _provider_tinted_color(base: tuple, remaining_fraction: float) -> tuple:
     return _mix(base, (0.90, 0.20, 0.15), 0.7)
 
 
+def _remaining_fraction(window) -> float:
+    if hasattr(window, "remaining_percent"):
+        return max(0.0, min(1.0, window.remaining_percent / 100.0))
+    return max(0.0, min(1.0, float(window)))
+
+
+def _display_percent(windows: list) -> int:
+    if not windows:
+        return 0
+    return int(round(_remaining_fraction(windows[0]) * 100))
+
+
+def _badge_level(windows: list) -> str | None:
+    for window in windows[1:]:
+        remaining = _remaining_fraction(window)
+        if getattr(window, "limit_reached", False) or remaining < MEDIUM_THRESHOLD:
+            return "low"
+    for window in windows[1:]:
+        if _remaining_fraction(window) < HIGH_THRESHOLD:
+            return "medium"
+    return None
+
+
 def render_icon(
     windows: list,
     base_color: tuple,
@@ -79,12 +102,7 @@ def render_icon(
     ctx.stroke()
 
     # Normalize windows to remaining fractions
-    fractions = []
-    for w in windows:
-        if hasattr(w, "remaining_percent"):
-            fractions.append(max(0.0, min(1.0, w.remaining_percent / 100.0)))
-        else:
-            fractions.append(max(0.0, min(1.0, float(w))))
+    fractions = [_remaining_fraction(w) for w in windows]
 
     if not fractions:
         fractions = [0.0]
@@ -107,35 +125,42 @@ def render_icon(
         ctx.stroke()
 
     if show_pct and fractions:
-        pct = int(round(fractions[0] * 100))
+        pct = _display_percent(windows)
         text = str(pct)
         ctx.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        font_size = size * 0.50
-        ctx.set_font_size(font_size)
-
-        extents = ctx.text_extents(text)
+        font_size = size * (0.58 if pct >= 100 else 0.66)
+        max_text_width = size * 0.76
+        while True:
+            ctx.set_font_size(font_size)
+            extents = ctx.text_extents(text)
+            if extents.width <= max_text_width or font_size <= size * 0.42:
+                break
+            font_size -= 1
         tw = extents.width
         th = extents.height
         tx = cx - tw / 2 - extents.x_bearing
         ty = cy - th / 2 - extents.y_bearing
 
-        bw = tw + 4
-        bh = th + 1
-        bx = tx + extents.x_bearing - 2
-        by = ty + extents.y_bearing - 1
-        r = 1.5
-        ctx.new_path()
-        ctx.arc(bx + r, by + r, r, math.pi, 3 * math.pi / 2)
-        ctx.arc(bx + bw - r, by + r, r, 3 * math.pi / 2, 2 * math.pi)
-        ctx.arc(bx + bw - r, by + bh - r, r, 0, math.pi / 2)
-        ctx.arc(bx + r, by + bh - r, r, math.pi / 2, math.pi)
-        ctx.close_path()
-        ctx.set_source_rgba(0, 0, 0, 0.7)
+        ctx.arc(cx, cy, size * 0.18, 0, 2 * math.pi)
+        ctx.set_source_rgba(0, 0, 0, 0.6)
         ctx.fill()
 
         ctx.move_to(tx, ty)
         ctx.set_source_rgba(1, 1, 1, 0.95)
         ctx.show_text(text)
+
+    badge = _badge_level(windows)
+    if badge:
+        bx = size * 0.83
+        by = size * 0.17
+        br = size * 0.12
+        color = (0.90, 0.20, 0.15) if badge == "low" else (0.90, 0.75, 0.05)
+        ctx.arc(bx, by, br + 1.0, 0, 2 * math.pi)
+        ctx.set_source_rgba(0, 0, 0, 0.9)
+        ctx.fill()
+        ctx.arc(bx, by, br, 0, 2 * math.pi)
+        ctx.set_source_rgba(*color, 0.98)
+        ctx.fill()
 
     return surface
 

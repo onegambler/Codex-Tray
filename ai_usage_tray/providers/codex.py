@@ -85,18 +85,21 @@ class CodexProvider(BaseProvider):
         except (json.JSONDecodeError, OSError) as e:
             return None, f"auth.json read error: {e}"
 
-        token = auth.get("tokens", {}).get("access_token")
+        tokens = auth.get("tokens", {})
+        token = tokens.get("access_token")
         if not token:
             return None, "no access_token in auth.json"
 
-        req = urllib.request.Request(
-            CODEX_USAGE_API_URL,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "User-Agent": "CodexCLI/0.138.0",
-                "Accept": "application/json",
-            },
-        )
+        account_id = tokens.get("account_id")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "CodexCLI/0.138.0",
+            "Accept": "application/json",
+        }
+        if account_id:
+            headers["OpenAI-Account-ID"] = account_id
+
+        req = urllib.request.Request(CODEX_USAGE_API_URL, headers=headers)
 
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
