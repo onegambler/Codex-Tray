@@ -16,7 +16,7 @@ else
     exit 1
 fi
 
-echo "==> Installing codex-tray..."
+echo "==> Installing ai-usage-tray..."
 if pip3 install "$DIR" 2>/dev/null; then
     :
 else
@@ -26,11 +26,11 @@ fi
 
 echo "==> Setting up autostart..."
 mkdir -p ~/.config/autostart
-cp "$DIR/autostart/codex-tray.desktop" ~/.config/autostart/
+cp "$DIR/autostart/ai-usage-tray.desktop" ~/.config/autostart/
 
 echo ""
-echo "Done! Run 'codex-tray' to start."
+echo "Done! Run 'ai-usage-tray' to start."
 echo ""
-echo "NOTE: Codex CLI must be installed and logged in first:"
-echo "  npm install -g @openai/codex"
-echo "  codex"
+echo "NOTE: At least one provider must be configured."
+echo "      Codex is auto-detected if 'codex' CLI is logged in."
+echo "      OpenCode Go requires a workspace ID and auth cookie."
